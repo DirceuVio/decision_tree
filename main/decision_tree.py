@@ -2,9 +2,19 @@ from typing import List, Union, Any, Dict, Tuple
 import pandas as pd
 import numpy as np
 
+
 class Node:
+    """
+    A Node for our tree
+    """
+
     def __init__(
-        self, left_node, right_node, split_metric: int, split_value: float
+        self,
+        left_node,
+        right_node,
+        split_metric: Union[int, str],
+        split_metric_index: int,
+        split_value: float,
     ) -> None:
         """
         Initialize a Node object in a decision tree.
@@ -15,7 +25,9 @@ class Node:
             The left child node.
         right_node : Node
             The right child node.
-        split_metric : int
+        split_metric : Union[int, str]
+            The index of the feature used for splitting.
+        split_metric_index : int
             The index of the feature used for splitting.
         split_value : float
             The value of the feature used for splitting.
@@ -23,6 +35,7 @@ class Node:
         self.left_node = left_node
         self.right_node = right_node
         self.split_metric = split_metric
+        self.split_metric_index = split_metric_index
         self.split_value = split_value
 
     def __repr__(self) -> str:
@@ -36,9 +49,18 @@ class Node:
         """
         return f"{self.split_metric} <= {self.split_value} -> Yes {self.left_node} -> No {self.right_node}"
 
+
 class DecisionTreeClassifier:
+    """
+    Decision Tree Algorithm
+    """
+
     def __init__(
-        self, X: Union[np.ndarray, pd.DataFrame], y: Union[np.ndarray, pd.Series]
+        self,
+        X: Union[np.ndarray, pd.DataFrame],
+        y: Union[np.ndarray, pd.Series],
+        min_samples_leaf: Union[int, None] = None,
+        max_depth: Union[int, None] = None,
     ) -> None:
         """
         Initialize a DecisionTreeClassifier object.
@@ -52,16 +74,74 @@ class DecisionTreeClassifier:
         """
         self.X = X
         self.y = y
+        self.min_samples_leaf = min_samples_leaf
+        self.max_depth = max_depth
 
-    def fit(self):
+        try:
+            self.feature_names = self.X.columns
+        except:
+            self.feature_names = None
+
+    def fit(self) -> None:
         """
         Fit the decision tree on the provided data.
         """
         self._fitted_tree = self._fit_tree(self.X, self.y)
 
+    def predict(self, X: Union[np.ndarray, pd.DataFrame]) -> np.ndarray:
+        """
+        Predict the class labels for the input data.
+
+        Parameters
+        ----------
+        X : Union[np.ndarray, pd.DataFrame]
+            The feature matrix for prediction.
+
+        Returns
+        -------
+        np.ndarray
+            The predicted class labels.
+        """
+        X = np.array(X)
+        predictions = []
+
+        for line in X:
+            predictions.append(self._predict_line(line))
+
+        return np.array(predictions)
+
+    def _predict_line(
+        self, X: Union[np.ndarray, pd.DataFrame], tree: Union[Node, None] = None
+    ) -> Any:
+        """
+        Predict the class label for a single input instance.
+
+        Parameters
+        ----------
+        X : Union[np.ndarray, pd.DataFrame]
+            The feature matrix for prediction.
+        tree : Union[Node, None], optional
+            The decision tree node to start prediction from, by default None.
+
+        Returns
+        -------
+        Any
+            The predicted class label.
+        """
+        if tree is None:
+            tree = self._fitted_tree
+
+        if not isinstance(tree, Node):
+            return tree
+
+        if X[tree.split_metric_index].item() <= tree.split_value:
+            return self._predict_line(X, tree.left_node)
+        else:
+            return self._predict_line(X, tree.right_node)
+
     def _fit_tree(
         self, X: Union[np.ndarray, pd.DataFrame], y: Union[np.ndarray, pd.Series]
-    ):
+    ) -> None:
         """
         Recursively build the decision tree.
 
@@ -71,27 +151,52 @@ class DecisionTreeClassifier:
             The feature matrix.
         y : Union[np.ndarray, pd.Series]
             The target variable.
-        
+
         Returns
         -------
         Node
             The root node of the built decision tree.
         """
-        if self.check_purity(y):
-            classification = self.classify_data(y)
+        depth = 0
+
+        if self.max_depth is None:
+            self.max_depth = np.inf
+
+        if self.min_samples_leaf is None:
+            self.min_samples_leaf = 0
+
+        if (
+            self._check_purity(y)
+            or len(X) <= self.min_samples_leaf
+            or depth >= self.max_depth
+        ):
+            classification = self._classify_data(y)
             return classification
         else:
-            potential_splits = self.get_potential_splits(X)
-            best_split_column, best_split_value = self.best_split(
+            depth += 1
+            potential_splits = self._get_potential_splits(X)
+            best_split_column, best_split_value = self._best_split(
                 X, y, potential_splits
             )
-            X1, y1, X2, y2 = self.split_data(X, y, best_split_column, best_split_value)
+            X1, y1, X2, y2 = self._split_data(X, y, best_split_column, best_split_value)
 
         left_tree = self._fit_tree(X1, y1)
         right_tree = self._fit_tree(X2, y2)
-        return Node(left_tree, right_tree, best_split_column, best_split_value)
 
-    def check_purity(self, y: Union[np.ndarray, pd.Series]) -> bool:
+        if self.feature_names is not None:
+            best_split_column_name = self.feature_names[best_split_column]
+        else:
+            best_split_column_name = None
+
+        return Node(
+            left_tree,
+            right_tree,
+            best_split_column_name,
+            best_split_column,
+            best_split_value,
+        )
+
+    def _check_purity(self, y: Union[np.ndarray, pd.Series]) -> bool:
         """
         Check if the target variable is pure (contains only one class).
 
@@ -107,7 +212,7 @@ class DecisionTreeClassifier:
         """
         return len(np.unique(y)) == 1
 
-    def classify_data(self, y: Union[np.ndarray, pd.Series]) -> Any:
+    def _classify_data(self, y: Union[np.ndarray, pd.Series]) -> Any:
         """
         Return the classification of a leaf based on the most frequent class.
 
@@ -125,7 +230,7 @@ class DecisionTreeClassifier:
         index = count.argmax()
         return classes[index]
 
-    def get_potential_splits(
+    def _get_potential_splits(
         self, X: Union[np.ndarray, pd.DataFrame]
     ) -> Dict[int, List[Any]]:
         """
@@ -161,7 +266,7 @@ class DecisionTreeClassifier:
 
         return potential_splits
 
-    def split_data(
+    def _split_data(
         self,
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.Series],
@@ -181,7 +286,7 @@ class DecisionTreeClassifier:
             The index of the column to split on.
         split_value : float
             The value to split on.
-        
+
         Returns
         -------
         Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
@@ -205,7 +310,7 @@ class DecisionTreeClassifier:
 
         return (X1, y1, X2, y2)
 
-    def overall_entropy(
+    def _overall_entropy(
         self,
         y1: Union[np.ndarray, pd.Series],
         y2: Union[np.ndarray, pd.Series],
@@ -219,7 +324,7 @@ class DecisionTreeClassifier:
             The target variable of the first set.
         y2 : Union[np.ndarray, pd.Series]
             The target variable of the second set.
-        
+
         Returns
         -------
         float
@@ -227,12 +332,12 @@ class DecisionTreeClassifier:
         """
         len_1, len_2 = len(y1), len(y2)
 
-        entropy_1 = self.calculate_entropy(y1)
-        entropy_2 = self.calculate_entropy(y2)
+        entropy_1 = self._calculate_entropy(y1)
+        entropy_2 = self._calculate_entropy(y2)
 
         return (len_1 * entropy_1 + len_2 * entropy_2) / (len_1 + len_2)
 
-    def calculate_entropy(self, y: Union[np.ndarray, pd.Series]) -> float:
+    def _calculate_entropy(self, y: Union[np.ndarray, pd.Series]) -> float:
         """
         Calculate the entropy of a target variable.
 
@@ -240,7 +345,7 @@ class DecisionTreeClassifier:
         ----------
         y : Union[np.ndarray, pd.Series]
             The target variable.
-        
+
         Returns
         -------
         float
@@ -252,7 +357,7 @@ class DecisionTreeClassifier:
 
         return -np.sum(probs * np.log2(probs))
 
-    def best_split(
+    def _best_split(
         self,
         X: Union[np.ndarray, pd.DataFrame],
         y: Union[np.ndarray, pd.Series],
@@ -269,7 +374,7 @@ class DecisionTreeClassifier:
             The target variable.
         potential_splits : Dict[int, List[Any]]
             The potential split values for each column.
-        
+
         Returns
         -------
         Tuple[int, float]
@@ -282,8 +387,8 @@ class DecisionTreeClassifier:
 
         for index in potential_splits:
             for value in potential_splits[index]:
-                X1, y1, X2, y2 = self.split_data(X, y, index, value)
-                entropy = self.overall_entropy(y1, y2)
+                X1, y1, X2, y2 = self._split_data(X, y, index, value)
+                entropy = self._overall_entropy(y1, y2)
 
                 if min_entropy == None:
                     min_entropy = entropy
